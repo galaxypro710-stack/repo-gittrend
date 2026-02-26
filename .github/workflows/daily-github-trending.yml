@@ -2,14 +2,8 @@ name: Daily GitHub Trending Repos
 
 on:
   schedule:
-    # Chạy mỗi ngày lúc 6:00 AM
     - cron: '0 6 * * *'
-  workflow_dispatch:  # Cho phép chạy thủ công
-    inputs:
-      languages:
-        description: 'Languages to filter (comma separated: python,javascript,rust)'
-        required: false
-        default: 'python,javascript,typescript,rust,go'
+  workflow_dispatch:
 
 jobs:
   fetch-trending:
@@ -17,149 +11,44 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fetch Trending Repos by Language
+      - name: Fetch repos
         id: fetch
-        env:
-          GH_TOKEN: ${{ github.token }}
-          LANGUAGES: ${{ github.event.inputs.languages || 'python,javascript,typescript,rust,go' }}
         run: |
-          # Tạo file báo cáo
+          # Simple test - check if token works
+          echo "Testing GitHub API..."
+          RESPONSE=$(curl -s -H "Authorization: token ${{ github.token }}" "https://api.github.com/user")
+          echo "User: $(echo $RESPONSE | jq -r '.login')"
+
+          # Fetch trending Python repos (simple query)
+          echo "Fetching Python repos..."
+          curl -s -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/search/repositories?q=language:python+stars:>10&sort=stars&order=desc&per_page=5" \
+            > repos.json
+
+          echo "Fetched $(cat repos.json | jq '.total_count') repos"
+          cat repos.json | jq '.items[] | "\(.full_name) - \(.stargazers_count) stars"' | head -10
+
+      - name: Create report
+        run: |
           cat > daily-repos-report.md << 'EOF'
-          # 📊 Daily GitHub Repos Report - $(date +%Y-%m-%d)
+          # 📊 Daily GitHub Repos Report
 
-          > Tìm kiếm repos mới, nhiều star với mục tiêu tái sử dụng thương mại/cá nhân
+          ## Python Repos
 
-          ---
-
-          ## 🔥 Tổng quan
-
-          | Ngôn ngữ | Repo | ⭐ Stars | 📜 License | Mô tả |
-          |----------|------|----------|-----------|-------|
           EOF
 
-          # Danh sách ngôn ngữ
-          LANGUAGES="python,javascript,typescript,rust,go"
+          cat repos.json | jq -r '.items[] | "- **[\(.full_name)](\(.html_url))** - ⭐ \(.stargazers_count) stars" + "\n  > \(.description // "No description")"' >> daily-repos-report.md
 
-          # Fetch repos cho từng ngôn ngữ
-          for LANG in $(echo $LANGUAGES | tr ',' ' '); do
-            echo "Fetching $LANG repos..."
-
-            # Search repos with license only (thương mại an toàn)
-            curl -s -H "Authorization: token $GH_TOKEN" \
-              "https://api.github.com/search/repositories?q=language:$LANG+created:>$(date -d '7 days ago' +%Y-%m-%d)+license:mit,apache-2.0,bsd-3-clause,unlicense&sort=stars&order=desc&per_page=10" \
-              | jq -r --arg LANG "$LANG" '.items[] | "| \($LANG) | [\(.full_name)](\(.html_url)) | ⭐ \(.stargazers_count) | \(.license.spdx_id // "N/A") | \(.description // "No description")|"' \
-              >> daily-repos-report.md
-          done
-
-          # Thêm phần phân nhóm theo topic
-          cat >> daily-repos-report.md << 'EOF'
-
-          ---
-
-          ## 🤖 AI/ML Repos (Hot trends)
-
-          | Repo | ⭐ | 📜 License | Mô tả |
-          |------|-----|-----------|-------|
-          EOF
-
-          curl -s -H "Authorization: token $GH_TOKEN" \
-            "https://api.github.com/search/repositories?q=topic:ai+OR+topic:machine-learning+OR+topic:llm+created:>$(date -d '30 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=10" \
-            | jq -r '.items[] | "| [\(.full_name)](\(.html_url)) | ⭐ \(.stargazers_count) | \(.license.spdx_id // "N/A") | \(.description // "No description")|"' \
-            >> daily-repos-report.md
-
-          cat >> daily-repos-report.md << 'EOF'
-
-          ---
-
-          ## ☸️ DevOps/SRE Repos
-
-          | Repo | ⭐ | 📜 License | Mô tả |
-          |------|-----|-----------|-------|
-          EOF
-
-          curl -s -H "Authorization: token $GH_TOKEN" \
-            "https://api.github.com/search/repositories?q=topic:devops+OR+topic:sre+OR+topic:docker+created:>$(date -d '30 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=10" \
-            | jq -r '.items[] | "| [\(.full_name)](\(.html_url)) | ⭐ \(.stargazers_count) | \(.license.spdx_id // "N/A") | \(.description // "No description")|"' \
-            >> daily-repos-report.md
-
-          cat >> daily-repos-report.md << 'EOF'
-
-          ---
-
-          ## 🔒 Security Repos
-
-          | Repo | ⭐ | 📜 License | Mô tả |
-          |------|-----|-----------|-------|
-          EOF
-
-          curl -s -H "Authorization: token $GH_TOKEN" \
-            "https://api.github.com/search/repositories?q=topic:security+OR+topic:infosec+created:>$(date -d '30 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=10" \
-            | jq -r '.items[] | "| [\(.full_name)](\(.html_url)) | ⭐ \(.stargazers_count) | \(.license.spdx_id // "N/A") | \(.description // "No description")|"' \
-            >> daily-repos-report.md
-
-          cat >> daily-repos-report.md << 'EOF'
-
-          ---
-
-          ## 💡 Hướng dẫn sử dụng License
-
-          | License | Thương mại | Modifiable | Private use |
-          |---------|------------|------------|-------------|
-          | MIT | ✅ | ✅ | ✅ |
-          | Apache 2.0 | ✅ | ✅ | ✅ |
-          | BSD-3-Clause | ✅ | ✅ | ✅ |
-          | Unlicense | ✅ | ✅ | ✅ |
-          | GPLv3 | ⚠️ | ⚠️ | ✅ |
-          | No License | ❌ | ❌ | ❌ |
-
-          ---
-
-          *Generated by GitHub Action - $(date)*
-          EOF
-
-          # Hiển thị kết quả
-          echo "=== REPORT PREVIEW ==="
+          echo "Report created:"
           cat daily-repos-report.md
 
-      - name: Commit and push report
+      - name: Commit and push
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add daily-repos-report.md
-          git commit -m "Update daily repos report - $(date +%Y-%m-%d)" || echo "No changes to commit"
+          git add daily-repos-report.md repos.json
+          git commit -m "Update report - $(date +%Y-%m-%d)" || echo "No changes"
           git push
-
-      - name: Send Discord Notification
-        if: success()
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-        run: |
-          if [ -n "$DISCORD_WEBHOOK" ]; then
-            curl -s -X POST "$DISCORD_WEBHOOK" \
-              -H "Content-Type: application/json" \
-              -d '{
-                "embeds": [{
-                  "title": "📊 Daily GitHub Repos Report",
-                  "description": "New trending repositories fetched successfully!",
-                  "color": 3066993,
-                  "footer": {"text": "GitHub Action"},
-                  "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"
-                }]
-              }'
-          fi
-
-      - name: Send Slack Notification
-        if: success()
-        env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-        run: |
-          if [ -n "$SLACK_WEBHOOK" ]; then
-            curl -s -X POST "$SLACK_WEBHOOK" \
-              -H "Content-Type: application/json" \
-              -d '{
-                "text": "📊 *Daily GitHub Repos Report* - New trending repositories fetched! <${{ github.server_url }}/${{ github.repository }}/blob/main/daily-repos-report.md|View Report>"
-              }'
-          fi

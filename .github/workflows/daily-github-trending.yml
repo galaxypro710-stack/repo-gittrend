@@ -14,152 +14,158 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fetch repos by language
+      - name: Fetch Python repos
         run: |
-          echo "Testing API..."
-          USER=$(curl -s -H "Authorization: token ${{ github.token }}" "https://api.github.com/user" | jq -r '.login')
-          echo "User: $USER"
+          echo "=== Fetching Python repos ==="
+          curl -s -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/search/repositories?q=language:python+stars:>50+created:>$(date -d '30 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=15" \
+            > python_repos.json
 
-          # Fetch multiple languages
-          LANGUAGES="python javascript typescript rust go java cpp csharp"
-
-          echo "Fetching repos..."
-          > all_repos.json
-          echo '[' >> all_repos.json
-
-          FIRST=true
-          for LANG in $LANGUAGES; do
-            echo "Fetching $LANG..."
-            if [ "$FIRST" = true ]; then
-              FIRST=false
-            else
-              echo "," >> all_repos.json
-            fi
-            curl -s -H "Authorization: token ${{ github.token }}" \
-              "https://api.github.com/search/repositories?q=language:$LANG+stars:>100+created:>$(date -d '30 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=20" \
-              | jq '.items' >> all_repos.json
-          done
-
-          echo ']' >> all_repos.json
-          echo "Done fetching"
-
-      - name: Process repos
+      - name: Fetch JavaScript repos
         run: |
-          python3 << 'PYEOF'
-          import json
+          echo "=== Fetching JavaScript repos ==="
+          curl -s -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/search/repositories?q=language:javascript+stars:>50+created:>$(date -d '30 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=15" \
+            > js_repos.json
 
-          with open('all_repos.json', 'r') as f:
-            data = json.load(f)
+      - name: Fetch TypeScript repos
+        run: |
+          echo "=== Fetching TypeScript repos ==="
+          curl -s -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/search/repositories?q=language:typescript+stars:>50+created:>$(date -d '30 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=15" \
+            > ts_repos.json
 
-          repos = []
-          seen = set()
+      - name: Fetch Rust repos
+        run: |
+          echo "=== Fetching Rust repos ==="
+          curl -s -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/search/repositories?q=language:rust+stars:>50+created:>$(date -d '30 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=15" \
+            > rust_repos.json
 
-          for lang_items in data:
-            for repo in lang_items:
-              if repo['full_name'] not in seen:
-                seen.add(repo['full_name'])
-                repos.append({
-                  'name': repo['full_name'],
-                  'url': repo['html_url'],
-                  'stars': repo['stargazers_count'],
-                  'forks': repo['forks_count'],
-                  'description': repo['description'] or 'No description',
-                  'language': repo['language'],
-                  'license': repo['license']['spdx_id'] if repo.get('license') else 'No License',
-                  'topics': repo.get('topics', [])[:5],
-                  'created': repo['created_at'][:10],
-                  'pushed': repo['pushed_at'][:10]
-                })
-
-          # Sort by stars descending
-          repos.sort(key=lambda x: x['stars'], reverse=True)
-
-          with open('repos_processed.json', 'w') as f:
-            json.dump(repos[:60], f, indent=2)
-
-          print(f"Total: {len(repos)} repos, saved top 60")
-          PYEOF
+      - name: Fetch Go repos
+        run: |
+          echo "=== Fetching Go repos ==="
+          curl -s -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/search/repositories?q=language:go+stars:>50+created:>$(date -d '30 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=15" \
+            > go_repos.json
 
       - name: Create report
         run: |
-          python3 << 'PYEOF'
-          import json
-          from datetime import datetime
+          TODAY=$(date +%Y-%m-%d)
 
-          with open('repos_processed.json', 'r') as f:
-            repos = json.load(f)
+          cat > daily-repos-report.md << EOF
+          # 📊 Daily GitHub Repos Report - $TODAY
 
-          today = datetime.now().strftime('%Y-%m-%d')
+          > Filter: stars > 50, created < 30 days
 
-          # Group by language
-          by_lang = {}
-          for r in repos:
-            lang = r['language']
-            if lang not in by_lang:
-              by_lang[lang] = []
-            by_lang[lang].append(r)
+          ---
 
-          report = f"""# 📊 Daily GitHub Repos Report - {today}
+          ## 🐍 Python Repos
 
-> Top repo GitHub mới, nhiều star - Filter: stars>100, created<30 days
+          | ⭐ Stars | 🍴 Forks | Repo | License |
+          |----------|----------|------|---------|
+          EOF
 
----
+          cat python_repos.json | jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.license.spdx_id // "N/A") |" ' >> daily-repos-report.md
 
-## 🔥 All Top Repos (Sorted by Stars)
+          cat >> daily-repos-report.md << EOF
 
-| # | Ngôn ngữ | Repo | ⭐ Stars | 🍴 Forks | 📜 License |
-|---|----------|------|----------|----------|------------|
-"""
+          ---
 
-          for i, repo in enumerate(repos[:60], 1):
-            report += f"| {i} | {repo['language']} | [{repo['name']}]({repo['url']}) | {repo['stars']:,} | {repo['forks']:,} | {repo['license']} |\n"
+          ## 🌐 JavaScript Repos
 
-          # Group by language
-          report += "\n---\n\n## 🗂️ By Language\n\n"
+          | ⭐ Stars | 🍴 Forks | Repo | License |
+          |----------|----------|------|---------|
+          EOF
 
-          for lang in ['Python', 'JavaScript', 'TypeScript', 'Rust', 'Go', 'Java', 'C++', 'C#']:
-            if lang in by_lang:
-              report += f"### 🗣️ {lang}\n\n"
-              for repo in by_lang[lang][:10]:
-                report += f"- [{repo['name']}]({repo['url']}) - ⭐{repo['stars']:,} | 🍴{repo['forks']:,} | {repo['license']}\n"
-                report += f"  - {repo['description'][:100]}...\n\n"
+          cat js_repos.json | jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.license.spdx_id // "N/A") |" ' >> daily-repos-report.md
 
-          # Top by forks (trending)
-          by_forks = sorted(repos, key=lambda x: x['forks'], reverse=True)[:20]
-          report += "\n---\n\n## 📈 Trending (Top Forks)\n\n"
-          for i, repo in enumerate(by_forks, 1):
-            report += f"{i}. [{repo['name']}]({repo['url']}) - ⭐{repo['stars']:,} | 🍴{repo['forks']:,} | {repo['language']}\n"
+          cat >> daily-repos-report.md << EOF
 
-          # Best licenses for commercial use
-          commercial_licenses = ['MIT', 'Apache-2.0', 'BSD-3-Clause', 'Unlicense']
-          commercial = [r for r in repos if r['license'] in commercial_licenses]
-          report += "\n---\n\n## 💰 Best for Commercial (MIT/Apache/BSD/Unlicense)\n\n"
-          for i, repo in enumerate(commercial[:20], 1):
-            report += f"{i}. [{repo['name']}]({repo['url']}) - ⭐{repo['stars']:,} | 🍴{repo['forks']:,} | {repo['license']} | {repo['language']}\n"
+          ---
 
-          report += f"""
+          ## 💎 TypeScript Repos
 
----
+          | ⭐ Stars | 🍴 Forks | Repo | License |
+          |----------|----------|------|---------|
+          EOF
 
-## 💡 License Guide
+          cat ts_repos.json | jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.license.spdx_id // "N/A") |" ' >> daily-repos-report.md
 
-| License | Thương mại | Custom/Bán |
-|---------|------------|------------|
-| MIT | ✅ | ✅ |
-| Apache 2.0 | ✅ | ✅ |
-| BSD-3-Clause | ✅ | ✅ |
-| Unlicense | ✅ | ✅ |
-| GPLv3 | ⚠️ | ❌ |
-| No License | ❌ | ❌ |
+          cat >> daily-repos-report.md << EOF
 
-*Generated: {today}*
-"""
+          ---
 
-          with open('daily-repos-report.md', 'w') as f:
-            f.write(report)
+          ## ⚙️ Rust Repos
 
-          print("Report created!")
-          PYEOF
+          | ⭐ Stars | 🍴 Forks | Repo | License |
+          |----------|----------|------|---------|
+          EOF
+
+          cat rust_repos.json | jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.license.spdx_id // "N/A") |" ' >> daily-repos-report.md
+
+          cat >> daily-repos-report.md << EOF
+
+          ---
+
+          ## 🐹 Go Repos
+
+          | ⭐ Stars | 🍴 Forks | Repo | License |
+          |----------|----------|------|---------|
+          EOF
+
+          cat go_repos.json | jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.license.spdx_id // "N/A") |" ' >> daily-repos-report.md
+
+          cat >> daily-repos-report.md << EOF
+
+          ---
+
+          ## 💰 Commercial Ready (MIT/Apache/BSD)
+
+          Repos có license cho phép thương mại và custom:
+
+          | Language | Repo | ⭐ | License |
+          |----------|------|-----|---------|
+          EOF
+
+          for f in python_repos.json js_repos.json ts_repos.json rust_repos.json go_repos.json; do
+            cat $f | jq -r '.items[] | select(.license.spdx_id | . and (. == "MIT" or . == "Apache-2.0" or . == "BSD-3-Clause" or . == "Unlicense")) | "| \($f | gsub("_repos.json";"")) | [\(.full_name)](\(.html_url)) | \(.stargazers_count) | \(.license.spdx_id) |" '
+          done >> daily-repos-report.md
+
+          cat >> daily-repos-report.md << EOF
+
+          ---
+
+          ## 📈 Trending by Forks
+
+          | 🍴 Forks | ⭐ Stars | Repo | Language |
+          |----------|----------|------|----------|
+          EOF
+
+          for f in python_repos.json js_repos.json ts_repos.json rust_repos.json go_repos.json; do
+            cat $f | jq -r '.items[] | "| \(.forks_count) | \(.stargazers_count) | [\(.full_name)](\(.html_url)) | \($f | gsub("_repos.json";"")) |" '
+          done | sort -t'|' -k1 -rn | head -20 >> daily-repos-report.md
+
+          cat >> daily-repos-report.md << EOF
+
+          ---
+
+          ## 💡 License Guide
+
+          | License | Thương mại | Custom/Bán |
+          |---------|------------|------------|
+          | MIT | ✅ | ✅ |
+          | Apache 2.0 | ✅ | ✅ |
+          | BSD-3-Clause | ✅ | ✅ |
+          | Unlicense | ✅ | ✅ |
+          | GPLv3 | ⚠️ | ❌ |
+          | No License | ❌ | ❌ |
+
+          *Generated: $TODAY*
+          EOF
+
+          echo "Report created!"
+          cat daily-repos-report.md
 
       - name: Commit and push
         run: |

@@ -14,41 +14,232 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fetch repos
+      - name: Fetch repos by language
         id: fetch
         run: |
-          # Simple test - check if token works
-          echo "Testing GitHub API..."
-          RESPONSE=$(curl -s -H "Authorization: token ${{ github.token }}" "https://api.github.com/user")
-          echo "User: $(echo $RESPONSE | jq -r '.login')"
+          echo "Fetching repos..."
 
-          # Fetch trending Python repos (simple query)
-          echo "Fetching Python repos..."
-          curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=language:python+stars:>10&sort=stars&order=desc&per_page=5" \
-            > repos.json
+          # Fetch multiple languages
+          LANGUAGES="python,javascript,typescript,rust,go,java,cpp,csharp"
 
-          echo "Fetched $(cat repos.json | jq '.total_count') repos"
-          cat repos.json | jq '.items[] | "\(.full_name) - \(.stargazers_count) stars"' | head -10
+          # Initialize JSON array
+          echo '[' > repos.json
+
+          FIRST=true
+          for LANG in $(echo $LANGUAGES | tr ',' ' '); do
+            echo "Fetching $LANG..."
+            curl -s -H "Authorization: token ${{ github.token }}" \
+              "https://api.github.com/search/repositories?q=language:$LANG+stars:>50+created:>$(date -d '30 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=15" \
+              >> repos.json.tmp
+            echo "," >> repos.json.tmp
+          done
+
+          # Clean up JSON
+          cat repos.json.tmp | head -c -2 >> repos.json
+          echo ']' >> repos.json
+          rm repos.json.tmp
+
+          echo "Total repos fetched: $(cat repos.json | jq '.[] | length' | bc 2>/dev/null || echo '0')"
+
+      - name: Process repos
+        run: |
+          # Extract repos with star, fork, description
+          cat > process.py << 'PYEOF'
+          import json
+
+          with open('repos.json', 'r') as f:
+            data = json.load(f)
+
+          repos = []
+          seen = set()
+          for lang_repos in data:
+            for repo in lang_repos.get('items', []):
+              if repo['full_name'] not in seen:
+                seen.add(repo['full_name'])
+                repos.append({
+                  'name': repo['full_name'],
+                  'url': repo['html_url'],
+                  'stars': repo['stargazers_count'],
+                  'forks': repo['forks_count'],
+                  'description': repo['description'] or 'No description',
+                  'language': repo['language'],
+                  'license': repo['license']['spdx_id'] if repo.get('license') else 'No License',
+                  'topics': repo.get('topics', [])[:5],
+                  'created': repo['created_at'][:10],
+                  'pushed': repo['pushed_at'][:10]
+                })
+
+          # Sort by stars
+          repos.sort(key=lambda x: x['stars'], reverse=True)
+
+          with open('repos_processed.json', 'w') as f:
+            json.dump(repos[:50], f, indent=2)
+
+          print(f"Processed {len(repos)} unique repos")
+          PYEOF
+
+          python3 process.py
+
+      - name: Generate prompt for Gemini
+        run: |
+          python3 << 'PYEOF'
+          import json
+
+          with open('repos_processed.json', 'r') as f:
+            repos = json.load(f)
+
+          # Take top 20 repos for Gemini analysis (to avoid rate limits)
+          prompt = """Bạn là chuyên gia phân tích repo GitHub. Hãy phân tích các repo sau và đưa ra đánh giá ngắn gọn (mỗi repo 1-2 câu):
+
+1. Repo này làm gì?
+2. Tiềm năng sử dụng cho: dev, auto, agent, marketing, custom thương mại?
+3. Có thể kiếm tiền (custom/bán) được không?
+
+Danh sách repo (top 20 theo stars):
+
+"""
+          for i, repo in enumerate(repos[:20], 1):
+            prompt += f"{i}. **{repo['name']}** ({repo['language']}) - ⭐{repo['stars']} | {repo['description'][:100]}\n"
+
+          prompt += """
+
+Format trả lời (markdown table):
+| # | Repo | Mô tả | Tiềm năng | Kiếm tiền? |
+|---|------|-------|-----------|------------|
+| 1 | name | ... | dev/auto/agent/marketing | ✅/⚠️/❌ |
+
+Chỉ trả lời bằng tiếng Việt, ngắn gọn, thực tế."""
+
+          with open('gemini_prompt.txt', 'w') as f:
+            f.write(prompt)
+
+          print("Prompt generated for Gemini")
+          print(f"Prompt length: {len(prompt)} chars")
+          PYEOF
+
+      - name: Call Gemini API
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "GEMINI_API_KEY not set, skipping AI analysis"
+            echo "## AI Analysis" >> daily-repos-report.md
+            echo "⚠️ Cần thêm GEMINI_API_KEY để phân tích AI" >> daily-repos-report.md
+            exit 0
+          fi
+
+          echo "Calling Gemini API..."
+          PROMPT=$(cat gemini_prompt.txt)
+
+          RESPONSE=$(curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$GEMINI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"contents\": [{\"parts\": [{\"text\": \"$PROMPT\"}]}], \"generationConfig\": {\"temperature\": 0.7, \"maxOutputTokens\": 4000}}" 2>/dev/null)
+
+          if echo "$RESPONSE" | jq -e '.candidates[0].content.parts[0].text' > /dev/null 2>&1; then
+            echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text' > gemini_response.txt
+            echo "Gemini response received"
+          else
+            echo "Gemini API error:"
+            echo "$RESPONSE" | jq '.'
+            echo "AI Analysis failed" > gemini_response.txt
+          fi
 
       - name: Create report
         run: |
-          cat > daily-repos-report.md << 'EOF'
-          # 📊 Daily GitHub Repos Report
+          python3 << 'PYEOF'
+          import json
+          from datetime import datetime
 
-          ## Python Repos
+          with open('repos_processed.json', 'r') as f:
+            repos = json.load(f)
 
-          EOF
+          today = datetime.now().strftime('%Y-%m-%d')
 
-          cat repos.json | jq -r '.items[] | "- **[\(.full_name)](\(.html_url))** - ⭐ \(.stargazers_count) stars" + "\n  > \(.description // "No description")"' >> daily-repos-report.md
+          report = f"""# 📊 Daily GitHub Repos Report - {today}
 
-          echo "Report created:"
+> Tổng hợp repo GitHub mới, nhiều star - Phân tích tiềm năng sử dụng & kiếm tiền
+
+---
+
+## 📈 Top 50 Repos (Sorted by Stars)
+
+| # | Ngôn ngữ | Repo | ⭐ Stars | 🍴 Forks | 📜 License |
+|---|----------|------|----------|----------|------------|
+"""
+
+          for i, repo in enumerate(repos[:50], 1):
+            report += f"| {i} | {repo['language']} | [{repo['name']}]({repo['url']}) | {repo['stars']:,} | {repo['forks']:,} | {repo['license']} |\n"
+
+          # Add description section
+          report += """
+
+---
+
+## 📝 Top Repos - Chi tiết
+
+"""
+
+          for i, repo in enumerate(repos[:20], 1):
+            topics = ', '.join(repo['topics']) if repo['topics'] else 'No topics'
+            report += f"""### {i}. [{repo['name']}]({repo['url']})
+
+- **⭐ Stars**: {repo['stars']:,} | **🍴 Forks**: {repo['forks']:,}
+- **🗣️ Ngôn ngữ**: {repo['language']}
+- **📜 License**: {repo['license']}
+- **📁 Topics**: {topics}
+- **📅 Created**: {repo['created']} | **Updated**: {repo['pushed']}
+- **📝 Mô tả**: {repo['description']}
+
+---
+
+"""
+
+          # Add Gemini analysis if available
+          try:
+            with open('gemini_response.txt', 'r') as f:
+              gemini_response = f.read()
+            if gemini_response and len(gemini_response) > 50:
+              report += f"""---
+
+## 🤖 Phân tích AI (Gemini)
+
+{gemini_response}
+
+"""
+          except:
+            pass
+
+          report += f"""---
+
+## 💡 Hướng dẫn License
+
+| License | Thương mại | Modifiable | Bán custom |
+|---------|------------|------------|-------------|
+| MIT | ✅ | ✅ | ✅ |
+| Apache 2.0 | ✅ | ✅ | ✅ |
+| BSD-3-Clause | ✅ | ✅ | ✅ |
+| Unlicense | ✅ | ✅ | ✅ |
+| GPLv3 | ⚠️ | ✅ | ❌ |
+| No License | ❌ | ❌ | ❌ |
+
+---
+
+*Generated by GitHub Action - {today}*
+"""
+
+          with open('daily-repos-report.md', 'w') as f:
+            f.write(report)
+
+          print("Report created!")
+          print(f"Total repos: {len(repos)}")
+          PYEOF
+
           cat daily-repos-report.md
 
       - name: Commit and push
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add daily-repos-report.md repos.json
+          git add daily-repos-report.md repos.json repos_processed.json 2>/dev/null || true
           git commit -m "Update report - $(date +%Y-%m-%d)" || echo "No changes"
           git push

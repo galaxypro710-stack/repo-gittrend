@@ -2,16 +2,10 @@ name: Daily GitHub Trending Repos
 
 on:
   schedule:
-    # Vietnam time: 7AM = 0:00 UTC, 12PM = 5:00 UTC, 7PM = 12:00 UTC
     - cron: '0 0 * * *'     # 7AM Vietnam
     - cron: '0 5 * * *'     # 12PM Vietnam
     - cron: '0 12 * * *'    # 7PM Vietnam
   workflow_dispatch:
-    inputs:
-      report_type:
-        description: 'Report type: all, stars, forks, trending'
-        required: false
-        default: 'all'
 
 jobs:
   fetch-trending:
@@ -22,199 +16,122 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fetch by Stars (Top)
+      - name: Fetch data
         run: |
+          # Top by stars
           curl -s -H "Authorization: token ${{ github.token }}" \
             "https://api.github.com/search/repositories?q=stars:>1000&sort=stars&order=desc&per_page=30" \
             > by_stars.json
 
-      - name: Fetch by Forks (Trending)
-        run: |
+          # Trending by forks
           curl -s -H "Authorization: token ${{ github.token }}" \
             "https://api.github.com/search/repositories?q=forks:>100&sort=forks&order=desc&per_page=30" \
             > by_forks.json
 
-      - name: Fetch Recently Updated
-        run: |
-          curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=pushed:>$(date -d '1 day ago' +%Y-%m-%d)&sort=updated&order=desc&per_page=30" \
-            > by_updated.json
-
-      - name: Fetch New Repos (7 days)
-        run: |
+          # New repos
           curl -s -H "Authorization: token ${{ github.token }}" \
             "https://api.github.com/search/repositories?q=created:>$(date -d '7 days ago' +%Y-%m-%d)&sort=created&order=desc&per_page=30" \
             > by_new.json
 
-      - name: Fetch by Language - Python
-        run: |
+          # Python
           curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=language:python+stars:>100&sort=stars&order=desc&per_page=20" \
+            "https://api.github.com/search/repositories?q=language:python+stars:>100&sort=stars&order=desc&per_page=15" \
             > lang_python.json
 
-      - name: Fetch by Language - JavaScript
-        run: |
+          # JavaScript
           curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=language:javascript+stars:>100&sort=stars&order=desc&per_page=20" \
+            "https://api.github.com/search/repositories?q=language:javascript+stars:>100&sort=stars&order=desc&per_page=15" \
             > lang_js.json
 
-      - name: Fetch by Language - TypeScript
-        run: |
+          # TypeScript
           curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=language:typescript+stars:>100&sort=stars&order=desc&per_page=20" \
+            "https://api.github.com/search/repositories?q=language:typescript+stars:>100&sort=stars&order=desc&per_page=15" \
             > lang_ts.json
 
-      - name: Fetch by Language - Rust
-        run: |
-          curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=language:rust+stars:>50&sort=stars&order=desc&per_page=20" \
-            > lang_rust.json
+          echo "Done fetching"
 
-      - name: Fetch by Language - Go
-        run: |
-          curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=language:go+stars:>50&sort=stars&order=desc&per_page=20" \
-            > lang_go.json
-
-      - name: Create Reports
+      - name: Create Report
         run: |
           TODAY=$(date +%Y-%m-%d)
-          TIME=$(date +%H:%M)
 
-          # Function to generate table
-          generate_table() {
-            local file=$1
-            local lang_filter=$2
-            if [ -n "$lang_filter" ]; then
-              jq -r ".items[] | select(.language == \"$lang_filter\") | \"| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language) | \(if .license then .license.spdx_id else \"N/A\" end) |\"" $file
-            else
-              jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language // "N/A") | \(if .license then .license.spdx_id else "N/A\" end) |"' $file
-            fi
-          }
-
-          # Report 1: TOP STARS
+          # Daily report
           {
-            echo "# ⭐ Top Repos by Stars - $TODAY"
+            echo "# Daily GitHub Report - $TODAY"
             echo ""
-            echo "| ⭐ Stars | 🍴 Forks | Repo | Language | License |"
-            echo "|----------|----------|------|----------|---------|"
-            generate_table "by_stars.json"
-          } > report-stars.md
-
-          # Report 2: TRENDING (Forks)
-          {
-            echo "# 🔥 Trending Repos (by Forks) - $TODAY"
+            echo "## Top Stars"
             echo ""
-            echo "| 🍴 Forks | ⭐ Stars | Repo | Language | License |"
-            echo "|----------|----------|------|----------|---------|"
-            jq -r '.items[] | "| \(.forks_count) | \(.stargazers_count) | [\(.full_name)](\(.html_url)) | \(.language // "N/A") | \(if .license then .license.spdx_id else \"N/A\" end) |"' by_forks.json
-          } > report-trending.md
-
-          # Report 3: NEW REPOS
-          {
-            echo "# 🆕 New Repos (7 days) - $TODAY"
-            echo ""
-            echo "| ⭐ Stars | 🍴 Forks | Repo | Language | Created |"
-            echo "|----------|----------|------|----------|---------|"
-            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language // "N/A") | \(.created_at[0:10]) |"' by_new.json
-          } > report-new.md
-
-          # Report 4: RECENTLY UPDATED
-          {
-            echo "# 📅 Recently Updated - $TODAY"
-            echo ""
-            echo "| ⭐ Stars | 🍴 Forks | Repo | Language | Updated |"
-            echo "|----------|----------|------|----------|---------|"
-            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language // "N/A") | \(.pushed_at[0:10]) |"' by_updated.json
-          } > report-updated.md
-
-          # Report 5: BY LANGUAGE
-          {
-            echo "# 🗂️ Repos by Language - $TODAY"
-            echo ""
-            echo "## 🐍 Python"
-            echo ""
-            echo "| ⭐ Stars | 🍴 Forks | Repo | License |"
-            echo "|----------|----------|------|---------|"
-            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else \"N/A\" end) |"' lang_python.json
+            echo "| Stars | Forks | Repo |"
+            echo "|-------|-------|------|"
+            jq -r '.items[:20] | .[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) |"' by_stars.json
 
             echo ""
-            echo "## 🌐 JavaScript"
+            echo "## Trending (Forks)"
             echo ""
-            echo "| ⭐ Stars | 🍴 Forks | Repo | License |"
-            echo "|----------|----------|------|---------|"
-            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else \"N/A\" end) |"' lang_js.json
+            echo "| Forks | Stars | Repo |"
+            echo "|-------|-------|------|"
+            jq -r '.items[:20] | .[] | "| \(.forks_count) | \(.stargazers_count) | [\(.full_name)](\(.html_url)) |"' by_forks.json
 
             echo ""
-            echo "## 💎 TypeScript"
+            echo "## New (7 days)"
             echo ""
-            echo "| ⭐ Stars | 🍴 Forks | Repo | License |"
-            echo "|----------|----------|------|---------|"
-            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else \"N/A\" end) |"' lang_ts.json
-
-            echo ""
-            echo "## ⚙️ Rust"
-            echo ""
-            echo "| ⭐ Stars | 🍴 Forks | Repo | License |"
-            echo "|----------|----------|------|---------|"
-            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else \"N/A\" end) |"' lang_rust.json
-
-            echo ""
-            echo "## 🐹 Go"
-            echo ""
-            echo "| ⭐ Stars | 🍴 Forks | Repo | License |"
-            echo "|----------|----------|------|---------|"
-            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else \"N/A\" end) |"' lang_go.json
-          } > report-by-language.md
-
-          # Report 6: ALL IN ONE
-          {
-            echo "# 📊 Daily GitHub Report - $TODAY ($TIME)"
-            echo ""
-            echo "⏰ Updated: $TODAY at $TIME"
-            echo ""
-            echo "---"
-            echo ""
-            echo "## ⭐ Top by Stars"
-            echo ""
-            echo "| ⭐ | 🍴 | Repo | Lang |"
-            echo "|----|----|------|------|"
-            jq -r '.items[:15] | .[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language // \"N/A\") |"' by_stars.json
-
-            echo ""
-            echo "---"
-            echo ""
-            echo "## 🔥 Trending (Forks)"
-            echo ""
-            echo "| 🍴 | ⭐ | Repo | Lang |"
-            echo "|----|----|------|------|"
-            jq -r '.items[:15] | .[] | "| \(.forks_count) | \(.stargazers_count) | [\(.full_name)](\(.html_url)) | \(.language // \"N/A\") |"' by_forks.json
-
-            echo ""
-            echo "---"
-            echo ""
-            echo "## 🆕 New Repos"
-            echo ""
-            echo "| ⭐ | Repo | Lang |"
-            echo "|----|------|------|"
-            jq -r '.items[:10] | .[] | "| \(.stargazers_count) | [\(.full_name)](\(.html_url)) | \(.language // \"N/A\") |"' by_new.json
-
-            echo ""
-            echo "---"
-            echo ""
-            echo "## 💡 License Guide"
-            echo ""
-            echo "| License | Thương mại | Custom/Bán |"
-            echo "|---------|------------|------------|"
-            echo "| MIT | ✅ | ✅ |"
-            echo "| Apache 2.0 | ✅ | ✅ |"
-            echo "| BSD-3-Clause | ✅ | ✅ |"
-            echo "| No License | ❌ | ❌ |"
-            echo ""
-            echo "*Generated: $TODAY $TIME*"
+            echo "| Stars | Repo |"
+            echo "|-------|------|"
+            jq -r '.items[:15] | .[] | "| \(.stargazers_count) | [\(.full_name)](\(.html_url)) |"' by_new.json
           } > daily-repos-report.md
 
-          echo "Reports created!"
+          # Stars report
+          {
+            echo "# Top by Stars - $TODAY"
+            echo ""
+            echo "| Stars | Forks | Repo | Language | License |"
+            echo "|-------|-------|------|----------|---------|"
+            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language // "N/A") | \(if .license then .license.spdx_id else "N/A" end) |"' by_stars.json
+          } > report-stars.md
+
+          # Trending report
+          {
+            echo "# Trending by Forks - $TODAY"
+            echo ""
+            echo "| Forks | Stars | Repo | Language |"
+            echo "|-------|-------|------|----------|"
+            jq -r '.items[] | "| \(.forks_count) | \(.stargazers_count) | [\(.full_name)](\(.html_url)) | \(.language // "N/A") |"' by_forks.json
+          } > report-trending.md
+
+          # New report
+          {
+            echo "# New Repos - $TODAY"
+            echo ""
+            echo "| Stars | Forks | Repo | Language |"
+            echo "|-------|-------|------|----------|"
+            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language // "N/A") |"' by_new.json
+          } > report-new.md
+
+          # Language report
+          {
+            echo "# By Language - $TODAY"
+            echo ""
+            echo "## Python"
+            echo ""
+            echo "| Stars | Repo | License |"
+            echo "|-------|------|---------|"
+            jq -r '.items[] | "| \(.stargazers_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else "N/A" end) |"' lang_python.json
+
+            echo ""
+            echo "## JavaScript"
+            echo ""
+            echo "| Stars | Repo | License |"
+            echo "|-------|------|---------|"
+            jq -r '.items[] | "| \(.stargazers_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else "N/A" end) |"' lang_js.json
+
+            echo ""
+            echo "## TypeScript"
+            echo ""
+            echo "| Stars | Repo | License |"
+            echo "|-------|------|---------|"
+            jq -r '.items[] | "| \(.stargazers_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else "N/A" end) |"' lang_ts.json
+          } > report-by-language.md
+
+          echo "Reports created"
           ls -la *.md
 
       - name: Commit and push
@@ -222,5 +139,5 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add -A
-          git commit -m "Update reports - $(date +%Y-%m-%d %H:%M)" || echo "No changes"
+          git commit -m "Update reports - $(date +%Y-%m-%d)" || echo "No changes"
           git push

@@ -1,4 +1,4 @@
-name: Daily GitHub Trending
+name: Daily GitHub Trending Repos
 
 on:
   schedule:
@@ -8,98 +8,53 @@ on:
   workflow_dispatch:
 
 jobs:
-  fetch:
+  fetch-trending:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch data
+      - name: Fetch
         run: |
           curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=stars:>500&sort=stars&order=desc&per_page=15" \
-            > stars.json
+            "https://api.github.com/search/repositories?q=stars:>1000&sort=stars&order=desc&per_page=20" \
+            > by_stars.json
 
           curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=forks:>50&sort=forks&order=desc&per_page=15" \
-            > forks.json
+            "https://api.github.com/search/repositories?q=forks:>100&sort=forks&order=desc&per_page=20" \
+            > by_forks.json
 
           curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=created:>$(date -d '7 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=10" \
-            > new.json
+            "https://api.github.com/search/repositories?q=created:>$(date -d '7 days ago' +%Y-%m-%d)&sort=created&order=desc&per_page=20" \
+            > by_new.json
 
-      - name: Create prompt
-        run: |
-          python3 << 'PYEOF'
-          import json
-
-          with open('stars.json', 'r') as f:
-            data = json.load(f)
-
-          repos = []
-          for r in data['items'][:8]:
-            repos.append(f"- {r['full_name']} ({r['language']}) ⭐{r['stargazers_count']}")
-
-          prompt = "Phan tich 8 repo sau. Moi repo 1 cau:\n1. Lam gi?\n2. Tiem nang: dev/auto/agent/marketing?\n3. Kiem tien duoc?\n\n" + "\n".join(repos) + "\n\nFormat: | # | Repo | Tiep nang | Kiem tien |"
-
-          with open('prompt.txt', 'w') as f:
-            f.write(prompt)
-          print("Done")
-          PYEOF
-
-      - name: Call Gemini
-        env:
-          KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: |
-          if [ -z "$KEY" ]; then
-            echo "No Gemini key"
-            exit 0
-          fi
-
-          PROMPT=$(cat prompt.txt)
-          ESCAPED=$(echo "$PROMPT" | jq -Rs .)
-
-          RESP=$(curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$KEY" \
-            -H "Content-Type: application/json" \
-            -d "{\"contents\": [{\"parts\": [{\"text\": $ESCAPED}]}]}")
-
-          echo "$RESP" | jq -r '.candidates[0].content.parts[0].text' > ai.txt 2>/dev/null || echo "AI failed" > ai.txt
-          echo "AI done"
+          echo "Fetched"
 
       - name: Report
         run: |
           TODAY=$(date +%Y-%m-%d)
 
-          echo "# GitHub Report - $TODAY" > report.md
+          echo "# Daily GitHub $TODAY" > report.md
           echo "" >> report.md
-          echo "## Top Stars" >> report.md
-          echo "" >> report.md
-          jq -r '.items[:10] | .[] | "- " + .full_name + " ⭐" + (.stargazers_count | tostring)' stars.json >> report.md
-          echo "" >> report.md
-          echo "## Trending" >> report.md
-          echo "" >> report.md
-          jq -r '.items[:8] | .[] | "- " + .full_name + " 🍴" + (.forks_count | tostring)' forks.json >> report.md
-
-          if [ -f ai.txt ] && [ -s ai.txt ]; then
-            echo "" >> report.md
-            echo "## AI Analysis" >> report.md
-            echo "" >> report.md
-            cat ai.txt >> report.md
-          fi
+          echo "Top Stars:" >> report.md
+          jq -r '.items[:10] | .[] | .full_name' by_stars.json >> report.md
+          echo "Done"
 
       - name: Commit
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add -A
-          git commit -m "Update - $(date +%Y-%m-%d)" || true
+          git commit -m "Update" || echo "No"
           git push
 
       - name: Telegram
         if: success()
         env:
-          T: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          C: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          curl -s -X POST "https://api.telegram.org/bot$T/sendMessage" \
-            --data-urlencode "chat_id=$C" \
-            --data-urlencode "text=Report + AI updated"
+          curl -s -X POST "https://api.telegram.org/bot$TOKEN/sendMessage" \
+            --data-urlencode "chat_id=$CHAT" \
+            --data-urlencode "text=Report updated"

@@ -2,8 +2,16 @@ name: Daily GitHub Trending Repos
 
 on:
   schedule:
-    - cron: '0 6 * * *'
+    # Vietnam time: 7AM = 0:00 UTC, 12PM = 5:00 UTC, 7PM = 12:00 UTC
+    - cron: '0 0 * * *'     # 7AM Vietnam
+    - cron: '0 5 * * *'     # 12PM Vietnam
+    - cron: '0 12 * * *'    # 7PM Vietnam
   workflow_dispatch:
+    inputs:
+      report_type:
+        description: 'Report type: all, stars, forks, trending'
+        required: false
+        default: 'all'
 
 jobs:
   fetch-trending:
@@ -14,88 +22,182 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fetch Python repos
+      - name: Fetch by Stars (Top)
         run: |
           curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=language:python+stars:>50+created:>$(date -d '30 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=15" \
-            > python_repos.json
+            "https://api.github.com/search/repositories?q=stars:>1000&sort=stars&order=desc&per_page=30" \
+            > by_stars.json
 
-      - name: Fetch JavaScript repos
+      - name: Fetch by Forks (Trending)
         run: |
           curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=language:javascript+stars:>50+created:>$(date -d '30 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=15" \
-            > js_repos.json
+            "https://api.github.com/search/repositories?q=forks:>100&sort=forks&order=desc&per_page=30" \
+            > by_forks.json
 
-      - name: Fetch TypeScript repos
+      - name: Fetch Recently Updated
         run: |
           curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=language:typescript+stars:>50+created:>$(date -d '30 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=15" \
-            > ts_repos.json
+            "https://api.github.com/search/repositories?q=pushed:>$(date -d '1 day ago' +%Y-%m-%d)&sort=updated&order=desc&per_page=30" \
+            > by_updated.json
 
-      - name: Fetch Rust repos
+      - name: Fetch New Repos (7 days)
         run: |
           curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=language:rust+stars:>50+created:>$(date -d '30 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=15" \
-            > rust_repos.json
+            "https://api.github.com/search/repositories?q=created:>$(date -d '7 days ago' +%Y-%m-%d)&sort=created&order=desc&per_page=30" \
+            > by_new.json
 
-      - name: Fetch Go repos
+      - name: Fetch by Language - Python
         run: |
           curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=language:go+stars:>50+created:>$(date -d '30 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=15" \
-            > go_repos.json
+            "https://api.github.com/search/repositories?q=language:python+stars:>100&sort=stars&order=desc&per_page=20" \
+            > lang_python.json
 
-      - name: Create report
+      - name: Fetch by Language - JavaScript
+        run: |
+          curl -s -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/search/repositories?q=language:javascript+stars:>100&sort=stars&order=desc&per_page=20" \
+            > lang_js.json
+
+      - name: Fetch by Language - TypeScript
+        run: |
+          curl -s -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/search/repositories?q=language:typescript+stars:>100&sort=stars&order=desc&per_page=20" \
+            > lang_ts.json
+
+      - name: Fetch by Language - Rust
+        run: |
+          curl -s -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/search/repositories?q=language:rust+stars:>50&sort=stars&order=desc&per_page=20" \
+            > lang_rust.json
+
+      - name: Fetch by Language - Go
+        run: |
+          curl -s -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/search/repositories?q=language:go+stars:>50&sort=stars&order=desc&per_page=20" \
+            > lang_go.json
+
+      - name: Create Reports
         run: |
           TODAY=$(date +%Y-%m-%d)
+          TIME=$(date +%H:%M)
 
+          # Function to generate table
+          generate_table() {
+            local file=$1
+            local lang_filter=$2
+            if [ -n "$lang_filter" ]; then
+              jq -r ".items[] | select(.language == \"$lang_filter\") | \"| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language) | \(if .license then .license.spdx_id else \"N/A\" end) |\"" $file
+            else
+              jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language // "N/A") | \(if .license then .license.spdx_id else "N/A\" end) |"' $file
+            fi
+          }
+
+          # Report 1: TOP STARS
           {
-            echo "# 📊 Daily GitHub Repos Report - $TODAY"
+            echo "# ⭐ Top Repos by Stars - $TODAY"
             echo ""
-            echo "> Filter: stars > 50, created < 30 days"
+            echo "| ⭐ Stars | 🍴 Forks | Repo | Language | License |"
+            echo "|----------|----------|------|----------|---------|"
+            generate_table "by_stars.json"
+          } > report-stars.md
+
+          # Report 2: TRENDING (Forks)
+          {
+            echo "# 🔥 Trending Repos (by Forks) - $TODAY"
             echo ""
-            echo "---"
+            echo "| 🍴 Forks | ⭐ Stars | Repo | Language | License |"
+            echo "|----------|----------|------|----------|---------|"
+            jq -r '.items[] | "| \(.forks_count) | \(.stargazers_count) | [\(.full_name)](\(.html_url)) | \(.language // "N/A") | \(if .license then .license.spdx_id else \"N/A\" end) |"' by_forks.json
+          } > report-trending.md
+
+          # Report 3: NEW REPOS
+          {
+            echo "# 🆕 New Repos (7 days) - $TODAY"
             echo ""
-            echo "## 🐍 Python Repos"
+            echo "| ⭐ Stars | 🍴 Forks | Repo | Language | Created |"
+            echo "|----------|----------|------|----------|---------|"
+            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language // "N/A") | \(.created_at[0:10]) |"' by_new.json
+          } > report-new.md
+
+          # Report 4: RECENTLY UPDATED
+          {
+            echo "# 📅 Recently Updated - $TODAY"
+            echo ""
+            echo "| ⭐ Stars | 🍴 Forks | Repo | Language | Updated |"
+            echo "|----------|----------|------|----------|---------|"
+            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language // "N/A") | \(.pushed_at[0:10]) |"' by_updated.json
+          } > report-updated.md
+
+          # Report 5: BY LANGUAGE
+          {
+            echo "# 🗂️ Repos by Language - $TODAY"
+            echo ""
+            echo "## 🐍 Python"
             echo ""
             echo "| ⭐ Stars | 🍴 Forks | Repo | License |"
             echo "|----------|----------|------|---------|"
-            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else "N/A" end) |"' python_repos.json
+            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else \"N/A\" end) |"' lang_python.json
+
+            echo ""
+            echo "## 🌐 JavaScript"
+            echo ""
+            echo "| ⭐ Stars | 🍴 Forks | Repo | License |"
+            echo "|----------|----------|------|---------|"
+            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else \"N/A\" end) |"' lang_js.json
+
+            echo ""
+            echo "## 💎 TypeScript"
+            echo ""
+            echo "| ⭐ Stars | 🍴 Forks | Repo | License |"
+            echo "|----------|----------|------|---------|"
+            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else \"N/A\" end) |"' lang_ts.json
+
+            echo ""
+            echo "## ⚙️ Rust"
+            echo ""
+            echo "| ⭐ Stars | 🍴 Forks | Repo | License |"
+            echo "|----------|----------|------|---------|"
+            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else \"N/A\" end) |"' lang_rust.json
+
+            echo ""
+            echo "## 🐹 Go"
+            echo ""
+            echo "| ⭐ Stars | 🍴 Forks | Repo | License |"
+            echo "|----------|----------|------|---------|"
+            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else \"N/A\" end) |"' lang_go.json
+          } > report-by-language.md
+
+          # Report 6: ALL IN ONE
+          {
+            echo "# 📊 Daily GitHub Report - $TODAY ($TIME)"
+            echo ""
+            echo "⏰ Updated: $TODAY at $TIME"
+            echo ""
+            echo "---"
+            echo ""
+            echo "## ⭐ Top by Stars"
+            echo ""
+            echo "| ⭐ | 🍴 | Repo | Lang |"
+            echo "|----|----|------|------|"
+            jq -r '.items[:15] | .[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language // \"N/A\") |"' by_stars.json
 
             echo ""
             echo "---"
             echo ""
-            echo "## 🌐 JavaScript Repos"
+            echo "## 🔥 Trending (Forks)"
             echo ""
-            echo "| ⭐ Stars | 🍴 Forks | Repo | License |"
-            echo "|----------|----------|------|---------|"
-            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else "N/A" end) |"' js_repos.json
+            echo "| 🍴 | ⭐ | Repo | Lang |"
+            echo "|----|----|------|------|"
+            jq -r '.items[:15] | .[] | "| \(.forks_count) | \(.stargazers_count) | [\(.full_name)](\(.html_url)) | \(.language // \"N/A\") |"' by_forks.json
 
             echo ""
             echo "---"
             echo ""
-            echo "## 💎 TypeScript Repos"
+            echo "## 🆕 New Repos"
             echo ""
-            echo "| ⭐ Stars | 🍴 Forks | Repo | License |"
-            echo "|----------|----------|------|---------|"
-            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else "N/A" end) |"' ts_repos.json
-
-            echo ""
-            echo "---"
-            echo ""
-            echo "## ⚙️ Rust Repos"
-            echo ""
-            echo "| ⭐ Stars | 🍴 Forks | Repo | License |"
-            echo "|----------|----------|------|---------|"
-            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else "N/A" end) |"' rust_repos.json
-
-            echo ""
-            echo "---"
-            echo ""
-            echo "## 🐹 Go Repos"
-            echo ""
-            echo "| ⭐ Stars | 🍴 Forks | Repo | License |"
-            echo "|----------|----------|------|---------|"
-            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else "N/A" end) |"' go_repos.json
+            echo "| ⭐ | Repo | Lang |"
+            echo "|----|------|------|"
+            jq -r '.items[:10] | .[] | "| \(.stargazers_count) | [\(.full_name)](\(.html_url)) | \(.language // \"N/A\") |"' by_new.json
 
             echo ""
             echo "---"
@@ -107,20 +209,18 @@ jobs:
             echo "| MIT | ✅ | ✅ |"
             echo "| Apache 2.0 | ✅ | ✅ |"
             echo "| BSD-3-Clause | ✅ | ✅ |"
-            echo "| GPLv3 | ⚠️ | ❌ |"
             echo "| No License | ❌ | ❌ |"
             echo ""
-            echo "*Generated: $TODAY*"
-
+            echo "*Generated: $TODAY $TIME*"
           } > daily-repos-report.md
 
-          echo "Report created!"
-          cat daily-repos-report.md
+          echo "Reports created!"
+          ls -la *.md
 
       - name: Commit and push
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add -A
-          git commit -m "Update report - $(date +%Y-%m-%d)" || echo "No changes"
+          git commit -m "Update reports - $(date +%Y-%m-%d %H:%M)" || echo "No changes"
           git push

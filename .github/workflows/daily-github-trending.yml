@@ -14,124 +14,71 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Python and jq
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y python3 python3-pip jq
-
       - name: Fetch repos by language
         run: |
-          echo "Fetching repos..."
-
-          # Test API first
+          echo "Testing API..."
           USER=$(curl -s -H "Authorization: token ${{ github.token }}" "https://api.github.com/user" | jq -r '.login')
-          echo "Authenticated as: $USER"
+          echo "User: $USER"
 
-          # Fetch repos for each language
+          # Fetch multiple languages
           LANGUAGES="python javascript typescript rust go java cpp csharp"
 
+          echo "Fetching repos..."
+          > all_repos.json
+          echo '[' >> all_repos.json
+
+          FIRST=true
           for LANG in $LANGUAGES; do
             echo "Fetching $LANG..."
+            if [ "$FIRST" = true ]; then
+              FIRST=false
+            else
+              echo "," >> all_repos.json
+            fi
             curl -s -H "Authorization: token ${{ github.token }}" \
-              "https://api.github.com/search/repositories?q=language:$LANG+stars:>50+created:>$(date -d '30 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=10" \
-              > "repos_$LANG.json"
+              "https://api.github.com/search/repositories?q=language:$LANG+stars:>100+created:>$(date -d '30 days ago' +%Y-%m-%d)&sort=stars&order=desc&per_page=20" \
+              | jq '.items' >> all_repos.json
           done
 
-          echo "Done fetching!"
+          echo ']' >> all_repos.json
+          echo "Done fetching"
 
       - name: Process repos
         run: |
           python3 << 'PYEOF'
           import json
-          import os
+
+          with open('all_repos.json', 'r') as f:
+            data = json.load(f)
 
           repos = []
           seen = set()
 
-          # Read all language files
-          for filename in os.listdir('.'):
-            if filename.startswith('repos_') and filename.endswith('.json'):
-              with open(filename, 'r') as f:
-                data = json.load(f)
-                for repo in data.get('items', []):
-                  if repo['full_name'] not in seen:
-                    seen.add(repo['full_name'])
-                    repos.append({
-                      'name': repo['full_name'],
-                      'url': repo['html_url'],
-                      'stars': repo['stargazers_count'],
-                      'forks': repo['forks_count'],
-                      'description': repo['description'] or 'No description',
-                      'language': repo['language'],
-                      'license': repo['license']['spdx_id'] if repo.get('license') else 'No License',
-                      'topics': repo.get('topics', [])[:5],
-                    })
+          for lang_items in data:
+            for repo in lang_items:
+              if repo['full_name'] not in seen:
+                seen.add(repo['full_name'])
+                repos.append({
+                  'name': repo['full_name'],
+                  'url': repo['html_url'],
+                  'stars': repo['stargazers_count'],
+                  'forks': repo['forks_count'],
+                  'description': repo['description'] or 'No description',
+                  'language': repo['language'],
+                  'license': repo['license']['spdx_id'] if repo.get('license') else 'No License',
+                  'topics': repo.get('topics', [])[:5],
+                  'created': repo['created_at'][:10],
+                  'pushed': repo['pushed_at'][:10]
+                })
 
-          # Sort by stars
+          # Sort by stars descending
           repos.sort(key=lambda x: x['stars'], reverse=True)
 
           with open('repos_processed.json', 'w') as f:
-            json.dump(repos[:50], f, indent=2)
+            json.dump(repos[:60], f, indent=2)
 
-          print(f"Total: {len(repos)} repos")
+          print(f"Total: {len(repos)} repos, saved top 60")
           PYEOF
-
-      - name: Generate AI analysis
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: |
-          if [ -z "$GEMINI_API_KEY" ]; then
-            echo "No GEMINI_API_KEY, skipping AI"
-            exit 0
-          fi
-
-          # Create prompt
-          python3 << 'PYEOF'
-          import json
-
-          with open('repos_processed.json', 'r') as f:
-            repos = json.load(f)
-
-          prompt = """Phân tích 15 repo GitHub sau (top theo stars). Mỗi repo 1-2 câu:
-
-1. Repo làm gì?
-2. Dùng được cho: dev, auto, agent, marketing, custom bán?
-3. Kiếm tiền được không?
-
-"""
-          for i, repo in enumerate(repos[:15], 1):
-            prompt += f"{i}. {repo['name']} ({repo['language']}) - ⭐{repo['stars']} - {repo['description'][:80]}...\n"
-
-          prompt += """
-
-Format markdown table:
-| # | Repo | Mô tả ngắn | Tiềm năng | Kiếm tiền |
-|---|------|------------|-----------|-----------|
-| 1 | ... | ... | dev/auto/agent | ✅/⚠️/❌ |"""
-
-          with open('prompt.txt', 'w') as f:
-            f.write(prompt)
-
-          print("Prompt ready")
-          PYEOF
-
-          # Call Gemini
-          PROMPT=$(cat prompt.txt)
-          # Escape for JSON
-          PROMPT_ESCAPED=$(echo "$PROMPT" | jq -Rs .)
-
-          RESPONSE=$(curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$GEMINI_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{\"contents\": [{\"parts\": [{\"text\": $PROMPT_ESCAPED}]}]}")
-
-          echo "$RESPONSE" > gemini_raw.json
-
-          if echo "$RESPONSE" | jq -e '.candidates[0].content.parts[0].text' > /dev/null 2>&1; then
-            echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text' > gemini_analysis.md
-            echo "Gemini OK!"
-          else
-            echo "Gemini error"
-            cat gemini_raw.json
-          fi
 
       - name: Create report
         run: |
@@ -144,51 +91,57 @@ Format markdown table:
 
           today = datetime.now().strftime('%Y-%m-%d')
 
+          # Group by language
+          by_lang = {}
+          for r in repos:
+            lang = r['language']
+            if lang not in by_lang:
+              by_lang[lang] = []
+            by_lang[lang].append(r)
+
           report = f"""# 📊 Daily GitHub Repos Report - {today}
 
-> Top repo GitHub mới, nhiều star - Phân tích tiềm năng & kiếm tiền
+> Top repo GitHub mới, nhiều star - Filter: stars>100, created<30 days
 
 ---
 
-## 🔥 Top 50 Repos
+## 🔥 All Top Repos (Sorted by Stars)
 
 | # | Ngôn ngữ | Repo | ⭐ Stars | 🍴 Forks | 📜 License |
 |---|----------|------|----------|----------|------------|
 """
 
-          for i, repo in enumerate(repos[:50], 1):
+          for i, repo in enumerate(repos[:60], 1):
             report += f"| {i} | {repo['language']} | [{repo['name']}]({repo['url']}) | {repo['stars']:,} | {repo['forks']:,} | {repo['license']} |\n"
 
-          # Details for top 20
-          report += "\n---\n\n## 📝 Chi tiết Top 20\n\n"
-          for i, repo in enumerate(repos[:20], 1):
-            topics = ', '.join(repo['topics']) if repo['topics'] else 'None'
-            report += f"""### {i}. [{repo['name']}]({repo['url']})
+          # Group by language
+          report += "\n---\n\n## 🗂️ By Language\n\n"
 
-- ⭐ **{repo['stars']:,}** | 🍴 {repo['forks']:,} | 🗣️ {repo['language']} | 📜 {repo['license']}
-- 📁 Topics: {topics}
-- 📝 {repo['description']}
+          for lang in ['Python', 'JavaScript', 'TypeScript', 'Rust', 'Go', 'Java', 'C++', 'C#']:
+            if lang in by_lang:
+              report += f"### 🗣️ {lang}\n\n"
+              for repo in by_lang[lang][:10]:
+                report += f"- [{repo['name']}]({repo['url']}) - ⭐{repo['stars']:,} | 🍴{repo['forks']:,} | {repo['license']}\n"
+                report += f"  - {repo['description'][:100]}...\n\n"
 
-"""
+          # Top by forks (trending)
+          by_forks = sorted(repos, key=lambda x: x['forks'], reverse=True)[:20]
+          report += "\n---\n\n## 📈 Trending (Top Forks)\n\n"
+          for i, repo in enumerate(by_forks, 1):
+            report += f"{i}. [{repo['name']}]({repo['url']}) - ⭐{repo['stars']:,} | 🍴{repo['forks']:,} | {repo['language']}\n"
 
-          # Add Gemini analysis
-          try:
-            with open('gemini_analysis.md', 'r') as f:
-              gemini = f.read()
-            if len(gemini) > 100:
-              report += f"""---
+          # Best licenses for commercial use
+          commercial_licenses = ['MIT', 'Apache-2.0', 'BSD-3-Clause', 'Unlicense']
+          commercial = [r for r in repos if r['license'] in commercial_licenses]
+          report += "\n---\n\n## 💰 Best for Commercial (MIT/Apache/BSD/Unlicense)\n\n"
+          for i, repo in enumerate(commercial[:20], 1):
+            report += f"{i}. [{repo['name']}]({repo['url']}) - ⭐{repo['stars']:,} | 🍴{repo['forks']:,} | {repo['license']} | {repo['language']}\n"
 
-## 🤖 Phân tích AI (Gemini)
+          report += f"""
 
-{gemini}
+---
 
-"""
-          except:
-            pass
-
-          report += f"""---
-
-## 💡 License & Kiếm tiền
+## 💡 License Guide
 
 | License | Thương mại | Custom/Bán |
 |---------|------------|------------|

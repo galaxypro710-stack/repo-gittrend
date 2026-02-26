@@ -1,153 +1,45 @@
-name: Daily GitHub Trending Repos
+name: Daily GitHub Trending
 
 on:
   schedule:
-    - cron: '0 0 * * *'     # 7AM Vietnam
-    - cron: '0 5 * * *'     # 12PM Vietnam
-    - cron: '0 12 * * *'    # 7PM Vietnam
+    - cron: '0 0 * * *'
+    - cron: '0 5 * * *'
+    - cron: '0 12 * * *'
   workflow_dispatch:
 
 jobs:
-  fetch-trending:
+  fetch:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Fetch data
+      - name: Fetch
         run: |
           curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=stars:>500&sort=stars&order=desc&per_page=20" \
-            > by_stars.json
+            "https://api.github.com/search/repositories?q=stars:>1000&sort=stars&order=desc&per_page=10" \
+            > repos.json
 
-          curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=forks:>50&sort=forks&order=desc&per_page=20" \
-            > by_forks.json
-
-          curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=created:>$(date -d '7 days ago' +%Y-%m-%d)&sort=created&order=desc&per_page=20" \
-            > by_new.json
-
-          curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=language:python+stars:>50&sort=stars&order=desc&per_page=10" \
-            > lang_python.json
-
-          curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=language:javascript+stars:>50&sort=stars&order=desc&per_page=10" \
-            > lang_js.json
-
-          curl -s -H "Authorization: token ${{ github.token }}" \
-            "https://api.github.com/search/repositories?q=language:typescript+stars:>50&sort=stars&order=desc&per_page=10" \
-            > lang_ts.json
-
-          echo "Fetching complete"
-
-      - name: Create Reports
+      - name: Report
         run: |
-          TODAY=$(date +%Y-%m-%d)
+          echo "# GitHub Report" > report.md
+          jq -r '.items[] | "- \(.full_name) ⭐\(.stargazers_count)"' repos.json >> report.md
+          cat report.md
 
-          # Daily report
-          echo "# Daily GitHub Report - $TODAY" > daily-repos-report.md
-          echo "" >> daily-repos-report.md
-          echo "## Top Stars" >> daily-repos-report.md
-          echo "" >> daily-repos-report.md
-          echo "| Stars | Forks | Repo |" >> daily-repos-report.md
-          echo "|-------|-------|------|" >> daily-repos-report.md
-          jq -r '.items[:15] | .[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) |"' by_stars.json >> daily-repos-report.md
-
-          echo "" >> daily-repos-report.md
-          echo "## Trending" >> daily-repos-report.md
-          echo "" >> daily-repos-report.md
-          echo "| Forks | Stars | Repo |" >> daily-repos-report.md
-          echo "|-------|-------|------|" >> daily-repos-report.md
-          jq -r '.items[:10] | .[] | "| \(.forks_count) | \(.stargazers_count) | [\(.full_name)](\(.html_url)) |"' by_forks.json >> daily-repos-report.md
-
-          echo "" >> daily-repos-report.md
-          echo "## New" >> daily-repos-report.md
-          echo "" >> daily-repos-report.md
-          echo "| Stars | Repo |" >> daily-repos-report.md
-          echo "|-------|------|" >> daily-repos-report.md
-          jq -r '.items[:10] | .[] | "| \(.stargazers_count) | [\(.full_name)](\(.html_url)) |"' by_new.json >> daily-repos-report.md
-
-          # Stars report
-          echo "# Top by Stars - $TODAY" > report-stars.md
-          echo "" >> report-stars.md
-          echo "| Stars | Forks | Repo | Language |" >> report-stars.md
-          echo "|-------|-------|------|----------|" >> report-stars.md
-          jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language // "N/A") |"' by_stars.json >> report-stars.md
-
-          # Trending report
-          echo "# Trending - $TODAY" > report-trending.md
-          echo "" >> report-trending.md
-          echo "| Forks | Stars | Repo | Language |" >> report-trending.md
-          echo "|-------|-------|------|----------|" >> report-trending.md
-          jq -r '.items[] | "| \(.forks_count) | \(.stargazers_count) | [\(.full_name)](\(.html_url)) | \(.language // "N/A") |"' by_forks.json >> report-trending.md
-
-          # New report
-          echo "# New Repos - $TODAY" > report-new.md
-          echo "" >> report-new.md
-          echo "| Stars | Forks | Repo | Language |" >> report-new.md
-          echo "|-------|-------|------|----------|" >> report-new.md
-          jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language // "N/A") |"' by_new.json >> report-new.md
-
-          # Language report
-          echo "# By Language - $TODAY" > report-by-language.md
-          echo "" >> report-by-language.md
-          echo "## Python" >> report-by-language.md
-          echo "| Stars | Repo |" >> report-by-language.md
-          echo "|-------|------|" >> report-by-language.md
-          jq -r '.items[] | "| \(.stargazers_count) | [\(.full_name)](\(.html_url)) |"' lang_python.json >> report-by-language.md
-
-          echo "" >> report-by-language.md
-          echo "## JavaScript" >> report-by-language.md
-          echo "| Stars | Repo |" >> report-by-language.md
-          echo "|-------|------|" >> report-by-language.md
-          jq -r '.items[] | "| \(.stargazers_count) | [\(.full_name)](\(.html_url)) |"' lang_js.json >> report-by-language.md
-
-          echo "" >> report-by-language.md
-          echo "## TypeScript" >> report-by-language.md
-          echo "| Stars | Repo |" >> report-by-language.md
-          echo "|-------|------|" >> report-by-language.md
-          jq -r '.items[] | "| \(.stargazers_count) | [\(.full_name)](\(.html_url)) |"' lang_ts.json >> report-by-language.md
-
-          echo "Done"
-
-      - name: Send to Telegram
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "No Telegram"
-            exit 0
-          fi
-
-          TODAY=$(date +%Y-%m-%d)
-
-          TOP5=$(jq -r '.items[:5] | .[] | "- \(.full_name) (\(.stargazers_count) stars)"' by_stars.json)
-
-          MSG="*Daily GitHub Report - $TODAY*
-
-*Top Stars:*
-$TOP5
-
-*New:* $(jq -r '.total_count' by_new.json) repos
-
-[View Report](https://github.com/galaxypro710-stack/repo-gittrend/blob/main/daily-repos-report.md)"
-
-          curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
-            --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" \
-            --data-urlencode "text=$MSG" \
-            --data-urlencode "parse_mode=Markdown"
-
-          echo "Telegram OK"
-
-      - name: Commit and push
+      - name: Commit
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add -A
-          git commit -m "Update reports - $(date +%Y-%m-%d)" || echo "No changes"
+          git commit -m "Update" || true
           git push
+
+      - name: Telegram
+        if: success()
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          MSG="Report updated"
+          curl -s -X POST "https://api.telegram.org/bot$TOKEN/sendMessage" \
+            --data-urlencode "chat_id=$CHAT" \
+            --data-urlencode "text=$MSG"

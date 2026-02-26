@@ -44,87 +44,29 @@ jobs:
 
           echo "Done fetching"
 
-      - name: Generate AI Prompt
-        run: |
-          python3 << 'PYEOF'
-          import json
-
-          with open('by_stars.json', 'r') as f:
-            stars = json.load(f)
-
-          # Create prompt for Gemini
-          repos = []
-          for r in stars['items'][:10]:
-            repos.append(f"- {r['full_name']} ({r['language']}) ⭐{r['stargazers_count']} - {r['description'][:80] if r['description'] else 'No description'}")
-
-          prompt = f"""Phân tích nhanh 10 repo GitHub top stars sau. Mỗi repo 1 câu:
-
-1. Repo làm gì?
-2. Dùng được cho: dev, auto, agent, marketing?
-3. Kiếm tiền (custom/bán) được không?
-
-{chr(10).join(repos)}
-
-Format markdown table:
-| # | Repo | Mô tả | Tiềm năng | Kiếm tiền |
-|---|------|-------|-----------|-----------|
-| 1 | ... | ... | dev/auto | ✅/⚠️/❌ |
-
-Trả lời ngắn gọn bằng tiếng Việt."""
-
-          with open('gemini_prompt.txt', 'w') as f:
-            f.write(prompt)
-
-          print("Prompt ready")
-          PYEOF
-
-      - name: Call Gemini API
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: |
-          if [ -z "$GEMINI_API_KEY" ]; then
-            echo "No GEMINI_API_KEY"
-            exit 0
-          fi
-
-          PROMPT=$(cat gemini_prompt.txt)
-          PROMPT_ESCAPED=$(echo "$PROMPT" | jq -Rs .)
-
-          RESPONSE=$(curl -s -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$GEMINI_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{\"contents\": [{\"parts\": [{\"text\": $PROMPT_ESCAPED}]}]}")
-
-          if echo "$RESPONSE" | jq -e '.candidates[0].content.parts[0].text' > /dev/null 2>&1; then
-            echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text' > gemini_analysis.md
-            echo "Gemini OK"
-          else
-            echo "Gemini error: $RESPONSE"
-            echo "AI Analysis failed" > gemini_analysis.md
-          fi
-
       - name: Create Reports
         run: |
           TODAY=$(date +%Y-%m-%d)
 
           # Daily report
           {
-            echo "# 📊 Daily GitHub Report - $TODAY"
+            echo "# Daily GitHub Report - $TODAY"
             echo ""
-            echo "## ⭐ Top Stars"
+            echo "## Top Stars"
             echo ""
             echo "| Stars | Forks | Repo |"
             echo "|-------|-------|------|"
             jq -r '.items[:15] | .[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) |"' by_stars.json
 
             echo ""
-            echo "## 🔥 Trending (Forks)"
+            echo "## Trending"
             echo ""
             echo "| Forks | Stars | Repo |"
             echo "|-------|-------|------|"
             jq -r '.items[:10] | .[] | "| \(.forks_count) | \(.stargazers_count) | [\(.full_name)](\(.html_url)) |"' by_forks.json
 
             echo ""
-            echo "## 🆕 New Repos"
+            echo "## New"
             echo ""
             echo "| Stars | Repo |"
             echo "|-------|------|"
@@ -133,63 +75,52 @@ Trả lời ngắn gọn bằng tiếng Việt."""
 
           # Stars report
           {
-            echo "# ⭐ Top by Stars - $TODAY"
+            echo "# Top by Stars - $TODAY"
             echo ""
-            echo "| Stars | Forks | Repo | Language | License |"
-            echo "|-------|-------|------|----------|---------|"
-            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language // "N/A") | \(if .license then .license.spdx_id else "N/A" end) |"' by_stars.json
+            echo "| Stars | Forks | Repo | Language |"
+            echo "|-------|-------|------|----------|"
+            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language // \"N/A\") |"' by_stars.json
           } > report-stars.md
 
           # Trending
           {
-            echo "# 🔥 Trending - $TODAY"
+            echo "# Trending - $TODAY"
             echo ""
             echo "| Forks | Stars | Repo | Language |"
             echo "|-------|-------|------|----------|"
-            jq -r '.items[] | "| \(.forks_count) | \(.stargazers_count) | [\(.full_name)](\(.html_url)) | \(.language // "N/A") |"' by_forks.json
+            jq -r '.items[] | "| \(.forks_count) | \(.stargazers_count) | [\(.full_name)](\(.html_url)) | \(.language // \"N/A\") |"' by_forks.json
           } > report-trending.md
 
           # New
           {
-            echo "# 🆕 New Repos - $TODAY"
+            echo "# New Repos - $TODAY"
             echo ""
             echo "| Stars | Forks | Repo | Language |"
             echo "|-------|-------|------|----------|"
-            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language // "N/A") |"' by_new.json
+            jq -r '.items[] | "| \(.stargazers_count) | \(.forks_count) | [\(.full_name)](\(.html_url)) | \(.language // \"N/A\") |"' by_new.json
           } > report-new.md
 
           # By Language
           {
-            echo "# 🗂️ By Language - $TODAY"
+            echo "# By Language - $TODAY"
             echo ""
-            echo "## 🐍 Python"
-            echo "| Stars | Repo | License |"
-            echo "|-------|------|---------|"
-            jq -r '.items[] | "| \(.stargazers_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else "N/A" end) |"' lang_python.json
+            echo "## Python"
+            echo "| Stars | Repo |"
+            echo "|-------|------|"
+            jq -r '.items[] | "| \(.stargazers_count) | [\(.full_name)](\(.html_url)) |"' lang_python.json
 
             echo ""
-            echo "## 🌐 JavaScript"
-            echo "| Stars | Repo | License |"
-            echo "|-------|------|---------|"
-            jq -r '.items[] | "| \(.stargazers_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else "N/A" end) |"' lang_js.json
+            echo "## JavaScript"
+            echo "| Stars | Repo |"
+            echo "|-------|------|"
+            jq -r '.items[] | "| \(.stargazers_count) | [\(.full_name)](\(.html_url)) |"' lang_js.json
 
             echo ""
-            echo "## 💎 TypeScript"
-            echo "| Stars | Repo | License |"
-            echo "|-------|------|---------|"
-            jq -r '.items[] | "| \(.stargazers_count) | [\(.full_name)](\(.html_url)) | \(if .license then .license.spdx_id else "N/A" end) |"' lang_ts.json
+            echo "## TypeScript"
+            echo "| Stars | Repo |"
+            echo "|-------|------|"
+            jq -r '.items[] | "| \(.stargazers_count) | [\(.full_name)](\(.html_url)) |"' lang_ts.json
           } > report-by-language.md
-
-          # AI Report
-          {
-            echo "# 🤖 AI Analysis - $TODAY"
-            echo ""
-            if [ -f gemini_analysis.md ]; then
-              cat gemini_analysis.md
-            else
-              echo "⚠️ Chưa có AI analysis"
-            fi
-          } > report-ai.md
 
           echo "Reports created"
 
@@ -205,22 +136,20 @@ Trả lời ngắn gọn bằng tiếng Việt."""
 
           TODAY=$(date +%Y-%m-%d)
 
-          # Create short Telegram message
-          TOP_REPOS=$(jq -r '.items[:5] | .[] | "⭐\(.stargazers_count) - \(.full_name)"' by_stars.json | head -5)
+          TOP5=$(jq -r '.items[:5] | .[] | .full_name' by_stars.json)
 
-          MESSAGE="📊 *Daily GitHub Report - $TODAY*
+          MESSAGE="Daily GitHub Report - $TODAY
 
-*Top 5 Stars:*
-$TOP_REPOS
+Top Stars:
+$TOP5
 
-*New repos:* $(jq -r '.total_count' by_new.json) repos
+New repos: $(jq -r '.total_count' by_new.json)
 
-*View full report:* https://github.com/galaxypro710-stack/repo-gittrend/blob/main/daily-repos-report.md"
+View: https://github.com/galaxypro710-stack/repo-gittrend/blob/main/daily-repos-report.md"
 
           curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
             -d "chat_id=$TELEGRAM_CHAT_ID" \
-            -d "text=$MESSAGE" \
-            -d "parse_mode=Markdown"
+            -d "text=$MESSAGE"
 
           echo "Telegram sent"
 

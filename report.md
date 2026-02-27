@@ -10,4 +10,4 @@ kamranahmedse/developer-roadmap
 jwasham/coding-interview-university
 donnemartin/system-design-primer
 vinta/awesome-python
-996icu/996.ICU
+awesome-selfhosted/awesome-selfhosted

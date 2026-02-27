@@ -55,7 +55,8 @@ jobs:
           TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          TOP=$(jq -r '.items[0].full_name' by_stars.json)
+          jq -r '.items[:5] | .[] | .full_name' by_stars.json > top5.txt
+          MSG=$(cat top5.txt)
           curl -s -X POST "https://api.telegram.org/bot$TOKEN/sendMessage" \
             --data-urlencode "chat_id=$CHAT" \
-            --data-urlencode "text=GitHub: $TOP + more"
+            --data-urlencode "text=$MSG"

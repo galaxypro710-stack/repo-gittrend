@@ -1,4 +1,4 @@
-# Daily GitHub 2026-03-06
+# Daily GitHub 2026-03-07
 
 Top Stars:
 codecrafters-io/build-your-own-x
@@ -7,7 +7,7 @@ freeCodeCamp/freeCodeCamp
 public-apis/public-apis
 EbookFoundation/free-programming-books
 kamranahmedse/developer-roadmap
-jwasham/coding-interview-university
 donnemartin/system-design-primer
+jwasham/coding-interview-university
 vinta/awesome-python
 awesome-selfhosted/awesome-selfhosted

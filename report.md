@@ -10,4 +10,4 @@ kamranahmedse/developer-roadmap
 donnemartin/system-design-primer
 jwasham/coding-interview-university
 vinta/awesome-python
-awesome-selfhosted/awesome-selfhosted
+openclaw/openclaw

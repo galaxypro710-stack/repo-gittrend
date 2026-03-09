@@ -9,5 +9,5 @@ EbookFoundation/free-programming-books
 kamranahmedse/developer-roadmap
 donnemartin/system-design-primer
 jwasham/coding-interview-university
-vinta/awesome-python
 openclaw/openclaw
+vinta/awesome-python
